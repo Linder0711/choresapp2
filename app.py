@@ -113,7 +113,7 @@ def reset_password():
         conn.commit()
         conn.close()
 
-        log_event(username, 'Password Reset', details="Password changed via reset page")
+        log_event(username)
         return render_template('reset_password.html', message="Password reset successful. You may now log in.")
 
     return render_template('reset_password.html')
