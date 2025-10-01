@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Chore History{% endblock %}
+
+{% block content %}
+  <h1>Chores History</h1>
+
+  <!-- FILTER FORM -->
+  <form id="filter-form" method="get">
+    <label for="start_date">Start Date:</label>
+    <input type="date" name="start_date" value="{{ start_date }}">
+
+    <label for="end_date">End Date:</label>
+    <input type="date" name="end_date" value="{{ end_date }}">
+
+    <label for="user">User:</label>
+    <select name="user">
+      <option value="">All</option>
+      {% for user in users %}
+        <option value="{{ user.user_id }}" {% if selected_user|int == user.user_id %}selected{% endif %}>{{ user.user_name }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="chore">Chore:</label>
+    <select name="chore">
+      <option value="">All</option>
+      {% for chore in chores %}
+        <option value="{{ chore.chore_id }}" {% if selected_chore|int == chore.chore_id %}selected{% endif %}>{{ chore.chore_name }}</option>
+      {% endfor %}
+    </select>
+
+    <button type="submit">Filter</button>
+  </form>
+
+  <br>
+
+  <!-- TABLE CONTAINER FOR AJAX REPLACEMENT -->
+  <div id="table-container">
+    {% include "partials/chore_history_table.html" %}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const form = document.getElementById("filter-form");
+
+      form.addEventListener("submit", async function (e) {
+        e.preventDefault(); // Stop the default page reload
+
+        // Gather all form data and build a URL query string
+        const params = new URLSearchParams(new FormData(form));
+        const url = `/chore_history?${params.toString()}`;
+
+        try {
+          const response = await fetch(url, {
+            headers: {
+              "X-Requested-With": "XMLHttpRequest"
+            }
+          });
+
+          if (response.ok) {
+            const html = await response.text();
+            document.getElementById("table-container").innerHTML = html;
+          } else {
+            alert("Something went wrong loading the data.");
+          }
+        } catch (error) {
+          console.error("AJAX error:", error);
+          alert("Error loading filtered results.");
+        }
+      });
+    });
+  </script>
+{% endblock %}

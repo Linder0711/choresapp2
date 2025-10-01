@@ -1,0 +1,20 @@
+{% if chores_data %}
+  <table border="1">
+    <tr>
+      <th>Name</th>
+      <th>Chore</th>
+      <th>Completed on</th>
+      <th>Points</th>
+    </tr>
+    {% for row in chores_data %}
+      <tr>
+        <td>{{ row.Name }}</td>
+        <td>{{ row.Chore }}</td>
+        <td>{{ row['Completed on']|dateformat }}</td>
+        <td>{{ row.Points }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+{% else %}
+  <p>No results found for the selected filters.</p>
+{% endif %}
