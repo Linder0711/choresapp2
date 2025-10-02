@@ -1,7 +1,8 @@
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 import sqlite3
 import os, bcrypt,hashlib
 from pathlib import Path
+from datetime import datetime
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'db', 'db.db')
@@ -75,6 +76,7 @@ def login():
                 session['logged_in'] = True
                 session['username'] = username
                 session['user_id'] = result[0]
+                session['type'] = result[1]
                
                 log_event('Login Success')
                 return redirect(url_for('leaderboard'))
@@ -120,7 +122,11 @@ def reset_password():
 
 
 @app.template_filter('dateformat')
-def dateformate(value, format='%d/%m/%y'):
+def dateformat(value, format='%d/%m/%y'):
+    if not value:
+        return ''
+    if isinstance(value, str):
+        value = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
     return value.strftime(format)
 
 @app.route('/leaderboard')
@@ -128,7 +134,8 @@ def leaderboard():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
 
-    user_id = session.get('user_id') 
+    user_id = session.get('user_id')
+    type = session.get('type') 
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -136,12 +143,13 @@ def leaderboard():
 
     # --- All-time leaderboard ---
     cursor.execute("""
-    SELECT u.username as Name, SUM(a.points_earned) as total_points FROM assignments as a
-    inner join users as u
+    SELECT u.username as Name, SUM(a.points_earned) as total_points FROM users as u
+    left join assignments as a
     on u.user_id = a.completed_by
+    Where u.type = ?
     group by username
     Order by Total_points desc
-""",)
+""",(type,))
     all_time_data = cursor.fetchall()
 
     # --- Time-based leaderboard ---
@@ -155,10 +163,11 @@ SELECT
 FROM users AS u
 LEFT JOIN assignments AS a
     ON a.completed_by = u.user_id
-    AND a.date_completed >= date('now', '-7 day')
+    and date(a.date_completed) >= date('now', '-7 day')
+    WHERE u.type = ?
 GROUP BY u.username
 ORDER BY points DESC;                 
-    """,)
+    """,(type,))
 
     elif range == 'month':
         cursor.execute("""
@@ -168,11 +177,11 @@ ORDER BY points DESC;
         FROM users AS u
         LEFT JOIN assignments AS a
             ON a.completed_by = u.user_id
-            AND DATEPART(MONTH, a.date_completed) = DATEPART(MONTH, GETDATE())
-            AND DATEPART(YEAR, a.date_completed) = DATEPART(YEAR, GETDATE())           
+        AND strftime('%Y-%m', a.date_completed) = strftime('%Y-%m', 'now', 'localtime')
+        where u.type = ?                          
         GROUP BY u.username
         Order by points desc               
-    """,)
+    """,(type,))
 
     else:  # today
         cursor.execute("""
@@ -182,10 +191,11 @@ ORDER BY points DESC;
         FROM users AS u
         LEFT JOIN assignments AS a
             ON a.completed_by = u.user_id         
-        WHERE a.date_completed = current_date
+        AND date(a.date_completed) = date('now', 'localtime') 
+        where u.type = ?
         GROUP BY u.username
         Order by points desc               
-    """,)
+    """,(type,))
 
     time_filtered_data = cursor.fetchall()
     conn.close()
@@ -202,33 +212,31 @@ def chore_history():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
 
+    user_type = session.get('type') 
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
-    selected_user = request.args.get('user')
-    selected_chore = request.args.get('chore')
+    selected_user = request.args.get('user', type=int)
+    selected_chore = request.args.get('chore', type=int)
 
-    from datetime import datetime, timedelta
-
-    if not start_date or not end_date:
-        today = datetime.today().date()
-        one_week_ago = today - timedelta(days=7)
+    from datetime import date, timedelta
+    today = date.today()
     if not start_date:
-        start_date = one_week_ago.isoformat()
+        start_date = (today - timedelta(days=7)).isoformat()
     if not end_date:
         end_date = today.isoformat()
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT username, user_id FROM users")
-    users = cursor.fetchall()
 
-    cursor.execute("""
-        SELECT chore_name, chore_id 
-        FROM chores
-        ORDER BY chore_name ASC
-    """)
-    chores = cursor.fetchall()
+    users = conn.execute(
+        "SELECT username, user_id FROM users WHERE type = ?",
+        (user_type,)
+    ).fetchall()
+
+    chores = conn.execute(
+        "SELECT chore_name, chore_id FROM chores WHERE type = ? ORDER BY chore_name ASC",
+        (user_type,)
+    ).fetchall()
 
     query = """
         SELECT
@@ -236,19 +244,16 @@ def chore_history():
             c.chore_name AS Chore,
             a.date_completed AS [Completed on],
             a.points_earned AS Points
-        FROM assignments AS a
-        INNER JOIN users AS u ON a.assigned_to = u.user_id
-        INNER JOIN chores AS c ON a.chore_id = c.chore_id
-        WHERE a.status = 'complete'
+        FROM assignments a
+        JOIN users  u ON u.user_id = a.completed_by    -- use assigned_to if that's your schema
+        JOIN chores c ON c.chore_id = a.chore_id
+        WHERE UPPER(a.status) IN ('APPROVED','COMPLETE')
+        And u.type = ? 
+          AND datetime(a.date_completed) >= datetime(?, 'start of day')
+          AND datetime(a.date_completed) <  datetime(?, '+1 day', 'start of day')
     """
-    params = []
+    params = [user_type, start_date, end_date]
 
-    if start_date:
-        query += " AND a.Date_Completed >= ?"
-        params.append(start_date)
-    if end_date:
-        query += " AND a.Date_Completed <= ?"
-        params.append(end_date)
     if selected_user:
         query += " AND u.user_id = ?"
         params.append(selected_user)
@@ -256,10 +261,9 @@ def chore_history():
         query += " AND c.chore_id = ?"
         params.append(selected_chore)
 
-    query += " ORDER BY [Completed on] DESC"
+    query += " ORDER BY a.date_completed DESC"
 
-    cursor.execute(query, params)
-    chores_data = cursor.fetchall()
+    chores_data = conn.execute(query, params).fetchall()
     conn.close()
 
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
@@ -276,13 +280,13 @@ def chore_history():
         selected_chore=selected_chore
     )
 
-
 @app.route('/active_chores', methods=['GET', 'POST'])
 def active_chores():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
 
     user_id = session.get('user_id')
+    type = session.get('type')
 
     if request.method == 'POST':
         assignment_id = request.form.get('assignment_id')
@@ -318,12 +322,11 @@ def active_chores():
         WHERE a.status != 'Complete'
           and a.status != 'Deleted'
           AND u.user_id = ?
+          AND u.type = ?
         ORDER BY a.date_assigned DESC
-    """, (user_id,))
+    """, (user_id, type,))
     
     current_user_chores = cursor.fetchall()
-    
-
     
     cursor.execute("""
         SELECT
@@ -338,8 +341,9 @@ def active_chores():
         WHERE a.status != 'Complete'
         and a.status != 'Deleted'
           AND NOT u.user_id = ?
+          AND u.type = ?
         ORDER BY a.date_assigned DESC
-    """, (user_id,))
+    """, (user_id, type,))
     other_user_chores = cursor.fetchall()
 
     
@@ -365,6 +369,7 @@ def assignments():
 
     if not session.get('logged_in'):
         return redirect(url_for('login'))
+    type = session.get('type')
 
     if request.method == 'POST':
         assigned_to = int(request.form.get('assigned_to'))
@@ -373,6 +378,7 @@ def assignments():
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+          
         cursor.execute("""
             INSERT INTO assignments (
                 chore_id,
@@ -381,8 +387,9 @@ def assignments():
                 status,
                 points_earned
             )
-            VALUES (?, ?, current_timestamp, 'Pending',1)
-        """, (chore_id, assigned_to))
+            VALUES (?, ?, current_timestamp, 'Pending',(SELECT points from chores
+            where chore_id = ? ))
+        """, (chore_id, assigned_to, chore_id,))
         conn.commit()
         conn.close()
 
@@ -397,15 +404,15 @@ def assignments():
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
-    cursor.execute("SELECT username, user_id FROM users Where type = 'F'")
+    cursor.execute("""SELECT username, user_id FROM users Where type = ?
+    """,(type,))
     users = cursor.fetchall()
 
-
-    cursor.execute("SELECT chore_name, chore_id FROM chores Where type = 'F'")
+    cursor.execute("""SELECT chore_name, chore_id FROM chores Where type = ?
+    """,(type,))
     chores = cursor.fetchall()
 
     conn.close()
-
     
     return render_template(
         'assignments.html',
@@ -420,7 +427,7 @@ def assignments():
 def chore_completions():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
-
+    type = session.get('type')
     if request.method == 'POST':
         action = request.form.get('action')
 
@@ -435,8 +442,8 @@ def chore_completions():
         FROM assignments as c
         Inner join users as u
         on c.assigned_to = u.user_id
-        WHERE c.status = 'Submitted'
-    """)
+        WHERE c.status = 'Submitted' AND u.type = ?
+    """,(type,))
             assignments = cursor.fetchall()
 
             for assignment_id, assigned_to in assignments:
@@ -446,7 +453,7 @@ def chore_completions():
                 date_completed = current_timestamp,
                 completed_by = ?
             WHERE assignment_id = ?
-        """, (assigned_to, assignment_id))
+        """, (assigned_to, assignment_id,))
 
         else:
             assignment_id = request.form.get('assignment_id')
@@ -463,7 +470,7 @@ def chore_completions():
                         date_completed = current_timestamp,
                         completed_by = ?
                     WHERE assignment_id = ?
-                """, (assigned_to, assignment_id))
+                """, (assigned_to, assignment_id,))
 
             elif action == 'send_back':
                 cursor.execute("""
@@ -497,9 +504,9 @@ def chore_completions():
         FROM assignments AS a
         INNER JOIN Users AS u ON a.assigned_to = u.user_id
         INNER JOIN Chores AS c ON a.chore_id = c.chore_id
-        WHERE a.status = 'Submitted'
+        WHERE a.status = 'Submitted' and u.type = ?
         ORDER BY a.date_assigned DESC
-    """)
+    """,(type,))
     
     Submitted_chores = cursor.fetchall()
     
@@ -513,7 +520,7 @@ def chore_completions():
 
 @app.route('/logout')
 def logout():
-    log_event(session.get('username'), 'Logout')
+    log_event(session.get('username'))
     session.clear()
     return redirect(url_for('login'))
 
