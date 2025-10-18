@@ -20,7 +20,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    SESSION_COOKIE_SECURE=False  # True if you ever serve via HTTPS
+    SESSION_COOKIE_SECURE=False
 )
         
 def login_required(f):
@@ -108,7 +108,7 @@ def login():
     print(get_flashed_messages(with_categories=True))
 
     return render_template('login.html')
-
+#For if I ever want to enable password reset
 #@app.route('/reset_password', methods=['GET', 'POST'])
 #def reset_password():
 #    if request.method == 'POST':

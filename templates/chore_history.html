@@ -5,7 +5,6 @@
 {% block content %}
   <h1>Chores History</h1>
 
-  <!-- FILTER FORM -->
   <form id="filter-form" method="get">
     <label for="start_date">Start Date:</label>
     <input type="date" name="start_date" value="{{ start_date }}">
@@ -34,7 +33,6 @@
 
   <br>
 
-  <!-- TABLE CONTAINER FOR AJAX REPLACEMENT -->
   <div id="table-container">
     {% include "partials/chore_history_table.html" %}
   </div>
@@ -46,9 +44,8 @@
       const form = document.getElementById("filter-form");
 
       form.addEventListener("submit", async function (e) {
-        e.preventDefault(); // Stop the default page reload
+        e.preventDefault(); 
 
-        // Gather all form data and build a URL query string
         const params = new URLSearchParams(new FormData(form));
         const url = `/chore_history?${params.toString()}`;
 

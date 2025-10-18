@@ -16,7 +16,7 @@ h1, h2, h3, h4, h5, h6 {
   background: linear-gradient(to top right , #09840f, #4e902f,#6aa76d); 
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  background-clip: text;   /* for Firefox */
+  background-clip: text; 
 }
 
 p {
