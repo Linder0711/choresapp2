@@ -4,7 +4,7 @@
 
 {% block content %}
   <h1>All-Time Leaderboard</h1>
-  <table border="1">
+  <table>
     <tr>
       <th>User</th>
       <th>Total Points</th>
@@ -28,7 +28,7 @@
   </form>
 
   <h3>Showing: {{ selected_range.replace('7days', 'Last 7 Days').replace('today', 'Today').replace('month', 'Month to Date') }}</h3>
-  <table border="1">
+  <table >
     <tr>
       <th>User</th>
       <th>Points</th>

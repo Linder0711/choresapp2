@@ -9,19 +9,20 @@
     <button type="submit">Approve All</button>
 </form>
 
-  <table border="1">
+  <table >
     <tr>
       	<th>Name</th>
 	<th>Chore</th>
 	<th>Set When</th>
-	<th>Completion_Status</th>
+	<th>Status</th>
+<th>Action</th>
 
     </tr>
 	{% for row in Submitted_chores %}
 <tr>
   <td>{{ row.Name }}</td>
   <td>{{ row.Chore }}</td>
-  <td>{{ row['Set when'] }}</td>
+  <td>{{ row.set_when }}</td>
   <td>{{ row.status }}</td>
 <td>
   {% if row.status == 'Submitted' %}

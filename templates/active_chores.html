@@ -5,12 +5,13 @@
 {% block content %}
 
   <h1>My current chores</h1>
-  <table border="1">
+  <table >
     <tr>
       	<th>Name</th>
 	<th>Chore</th>
 	<th>Set When</th>
-	<th>Completion_Status</th>
+	<th>Status</th>
+<th>Submit</th>
 
     </tr>
 	{% for row in current_user_chores %}
@@ -42,12 +43,13 @@
   </table>
 
   <h2>Other current chores</h2>
-  <table border="1">
+  <table >
     <tr>
       	<th>Name</th>
 	<th>Chore</th>
 	<th>Set When</th>
-	<th>Completion_Status</th>
+	<th>Status</th>
+<th>Submit</th>
 
     </tr>
 	{% for row in other_user_chores %}
