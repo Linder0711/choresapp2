@@ -108,7 +108,7 @@ def login():
     print(get_flashed_messages(with_categories=True))
 
     return render_template('login.html')
-#For if I ever want to enable password reset
+#For if I ever want to enable password reset testing this is a change
 #@app.route('/reset_password', methods=['GET', 'POST'])
 #def reset_password():
 #    if request.method == 'POST':
