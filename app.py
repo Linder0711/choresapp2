@@ -1,61 +1,81 @@
-from flask import Flask, render_template, request, redirect, url_for, session
+# --- Standard library imports ---
+import os
 import sqlite3
-import os, bcrypt,hashlib
+from datetime import date, datetime, timedelta
+from functools import wraps
 from pathlib import Path
-
+# --- Third-party imports ---
+import bcrypt
+from dotenv import load_dotenv
+from flask import (Flask, flash, get_flashed_messages,
+    redirect, render_template, request,
+    session, url_for)
+load_dotenv()
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'db', 'db.db')
-
+DB_PATH = os.path.join(BASE_DIR, os.environ.get("DATABASE_PATH", "db/db.db"))
 template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=False  # True if you ever serve via HTTPS
+)
+        
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+            
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-app.secret_key = '4be5b4b95f0c076bc1bb51bfdc45e48794046c281d2f95060c4b2d9cf3d757b9'
+def query_db(query, args=(), one=False):
+    with get_db() as conn:
+        cur = conn.execute(query, args)
+        rv = cur.fetchall()
+        cur.close()
+        return (rv[0] if rv else None) if one else rv
+
+def execute_db(query, args=()):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(query, args)
+        conn.commit()
+        cur.close()
+
+def get_date_range(start_date, end_date):
+    today = date.today()
+    if not start_date:
+        start_date = (today - timedelta(days=7)).isoformat()
+    if not end_date:
+        end_date = today.isoformat()
+    return start_date, end_date
 
 def check_login(username, password):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
+    user = query_db("SELECT password FROM users WHERE username = ?", (username,), one=True)
+    if not user:
+        return False
+    stored_hash = user['password']
+    return bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8'))
 
-    if not result:
-        return False  # No user found
+@app.template_filter('dateformat')
+def dateformat(value, format='%d/%m/%y'):
+    if not value:
+        return ''
+    if isinstance(value, str):
+        value = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    return value.strftime(format)
 
-    stored_hash = result[0]
-
-    # Check if this is a bcrypt hash
-    if stored_hash.startswith("$2b$"):
-        return bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8'))
-    else:
-        # Legacy SHA-256 check
-        input_hash = hashlib.sha256(password.encode()).hexdigest()
-        if input_hash == stored_hash:
-            # Upgrade to bcrypt
-            new_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("UPDATE Users SET password_hash = ? WHERE user_name = ?", (new_hash, username))
-            conn.commit()
-            conn.close()
-            return True
-        else:
-            return False
-            
-def log_event(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT user_id FROM Users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-
-    conn.commit()
-    conn.close()
-
-@app.route('/')
-def root_redirect():
-    return redirect(url_for('login'))
-
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    return render_template('login.html')
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -64,203 +84,149 @@ def login():
         password = request.form['password']
 
         if check_login(username, password):
-            
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id,type FROM users WHERE username = ?", (username,))
-            result = cursor.fetchone()
-            conn.close()
+            user = query_db(
+                "SELECT user_id, type FROM users WHERE username = ?",
+                [username],
+                one=True
+            )
 
-            if result:
-                session['logged_in'] = True
-                session['username'] = username
-                session['user_id'] = result[0]
-               
-                log_event('Login Success')
+            if user:
+                session.update({
+                    'logged_in': True,
+                    'username': username,
+                    'user_id': user['user_id'],
+                    'type': user['type']
+                })
+                flash("Login successful!", "success")
                 return redirect(url_for('leaderboard'))
-            else:
-                
-                return render_template('login.html', error="Login failed - user not found.")
 
-        else:
-            log_event(username, 'Login Failed', details="Invalid credentials")
-            return render_template('login.html', error="Invalid credentials")
+            flash("Login failed – user not found.", "error")
+            return redirect(url_for('login'))
+
+        flash("Invalid credentials. Please try again.", "error")
+        return redirect(url_for('login'))
+    print(get_flashed_messages(with_categories=True))
 
     return render_template('login.html')
 
-@app.route('/reset_password', methods=['GET', 'POST'])
-def reset_password():
-    if request.method == 'POST':
-        username = request.form['reset_username']
-        new_password = request.form['new_password']
-        hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+#@app.route('/reset_password', methods=['GET', 'POST'])
+#def reset_password():
+#    if request.method == 'POST':
+#        username = request.form['reset_username']
+#        new_password = request.form['new_password']
+#        hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+#        user = query_db("SELECT 1 FROM users WHERE username = ?", [username], one=True)
+#        if user is None:
+#            flash("Username not found. Please try again.", "error")
+#            return redirect(url_for('reset_password'))
 
-        
-        cursor.execute("SELECT 1 FROM Users WHERE username = ?", (username,))
-        if cursor.fetchone() is None:
-            conn.close()
-            return render_template('reset_password.html', error="Username not found. Please try again.")
+#        execute_db("UPDATE users SET password = ? WHERE username = ?", [hashed_password, username])
+#        flash("Password reset successful! You can now log in.", "success")
+#        return redirect(url_for('login'))
 
-        
-        cursor.execute("""
-            UPDATE Users
-            SET password = ?
-            WHERE username = ?
-        """, (hashed_password, username))
-        conn.commit()
-        conn.close()
-
-        log_event(username, 'Password Reset', details="Password changed via reset page")
-        return render_template('reset_password.html', message="Password reset successful. You may now log in.")
-
-    return render_template('reset_password.html')
-
-
-@app.template_filter('dateformat')
-def dateformate(value, format='%d/%m/%y'):
-    return value.strftime(format)
+#    return render_template('reset_password.html')
 
 @app.route('/leaderboard')
+@login_required
 def leaderboard():
-    if not session.get('logged_in'):
-        return redirect(url_for('login'))
-
-    user_id = session.get('user_id') 
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
+    user_type = session.get('type') 
     # --- All-time leaderboard ---
-    cursor.execute("""
-    SELECT u.username as Name, SUM(a.points_earned) as total_points FROM assignments as a
-    inner join users as u
-    on u.user_id = a.completed_by
-    group by username
-    Order by Total_points desc
-""",)
-    all_time_data = cursor.fetchall()
-
+    all_time_data = query_db("""
+        SELECT u.username as Name, SUM(a.points_earned) as total_points 
+        FROM users as u
+        LEFT JOIN assignments as a ON u.user_id = a.completed_by
+        WHERE u.type = ?
+        GROUP BY username
+        ORDER BY total_points DESC
+    """, (user_type,))
     # --- Time-based leaderboard ---
-    range = request.args.get('range', 'today')
-
-    if range == '7days':
-        cursor.execute("""
-SELECT 
-    u.username AS Name, 
-    IFNULL(SUM(a.points_earned), 0) AS points
-FROM users AS u
-LEFT JOIN assignments AS a
-    ON a.completed_by = u.user_id
-    AND a.date_completed >= date('now', '-7 day')
-GROUP BY u.username
-ORDER BY points DESC;                 
-    """,)
-
-    elif range == 'month':
-        cursor.execute("""
-        SELECT 
-            u.username AS Name, 
-            IFNULL(SUM(a.points_earned), 0) AS points
-        FROM users AS u
-        LEFT JOIN assignments AS a
-            ON a.completed_by = u.user_id
-            AND DATEPART(MONTH, a.date_completed) = DATEPART(MONTH, GETDATE())
-            AND DATEPART(YEAR, a.date_completed) = DATEPART(YEAR, GETDATE())           
-        GROUP BY u.username
-        Order by points desc               
-    """,)
-
+    time_range = request.args.get('range', 'today')
+    if time_range == '7days':
+        time_filtered_data = query_db("""
+            SELECT u.username AS Name, IFNULL(SUM(a.points_earned), 0) AS points
+            FROM users AS u
+            LEFT JOIN assignments AS a
+                ON a.completed_by = u.user_id
+                AND date(a.date_completed) >= date('now', '-7 day')
+            WHERE u.type = ?
+            GROUP BY u.username
+            ORDER BY points DESC
+        """, (user_type,))
+    elif time_range == 'month':
+        time_filtered_data = query_db("""
+            SELECT u.username AS Name, IFNULL(SUM(a.points_earned), 0) AS points
+            FROM users AS u
+            LEFT JOIN assignments AS a
+                ON a.completed_by = u.user_id
+                AND strftime('%Y-%m', a.date_completed) = strftime('%Y-%m', 'now', 'localtime')
+            WHERE u.type = ?
+            GROUP BY u.username
+            ORDER BY points DESC
+        """, (user_type,))
     else:  # today
-        cursor.execute("""
-        SELECT 
-            u.username AS Name, 
-            IFNULL(SUM(a.points_earned), 0) AS points
-        FROM users AS u
-        LEFT JOIN assignments AS a
-            ON a.completed_by = u.user_id         
-        WHERE a.date_completed = current_date
-        GROUP BY u.username
-        Order by points desc               
-    """,)
-
-    time_filtered_data = cursor.fetchall()
-    conn.close()
+        time_filtered_data = query_db("""
+            SELECT u.username AS Name, IFNULL(SUM(a.points_earned), 0) AS points
+            FROM users AS u
+            LEFT JOIN assignments AS a
+                ON a.completed_by = u.user_id         
+                AND date(a.date_completed) = date('now', 'localtime') 
+            WHERE u.type = ?
+            GROUP BY u.username
+            ORDER BY points DESC
+        """, (user_type,))
 
     return render_template(
         "leaderboard.html",
         all_time_data=all_time_data,
         time_filtered_data=time_filtered_data,
-        selected_range=range
+        selected_range=time_range
     )
 
 @app.route('/chore_history')
+@login_required
 def chore_history():
-    if not session.get('logged_in'):
-        return redirect(url_for('login'))
 
+    user_type = session.get('type') 
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
-    selected_user = request.args.get('user')
-    selected_chore = request.args.get('chore')
+    selected_user = request.args.get('user', type=int)
+    selected_chore = request.args.get('chore', type=int)
+    start_date, end_date = get_date_range(start_date, end_date)
+    users = query_db(
+        "SELECT username, user_id FROM users WHERE type = ?",
+        (user_type,)
+    )
+    chores = query_db(
+        "SELECT chore_name, chore_id FROM chores WHERE type = ? ORDER BY chore_name ASC",
+        (user_type,)
+    )
+    base_query = """
+    SELECT u.username AS Name,
+           c.chore_name AS Chore,
+           a.date_completed AS completed_on,
+           a.points_earned AS Points
+    FROM assignments a
+    JOIN users u ON u.user_id = a.completed_by
+    JOIN chores c ON c.chore_id = a.chore_id
+    WHERE UPPER(a.status) IN ('APPROVED','COMPLETE')
+      AND u.type = ? 
+      AND datetime(a.date_completed) >= datetime(?, 'start of day')
+      AND datetime(a.date_completed) <  datetime(?, '+1 day', 'start of day')
+"""
+    params = [user_type, start_date, end_date]
 
-    from datetime import datetime, timedelta
-
-    if not start_date or not end_date:
-        today = datetime.today().date()
-        one_week_ago = today - timedelta(days=7)
-    if not start_date:
-        start_date = one_week_ago.isoformat()
-    if not end_date:
-        end_date = today.isoformat()
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT username, user_id FROM users")
-    users = cursor.fetchall()
-
-    cursor.execute("""
-        SELECT chore_name, chore_id 
-        FROM chores
-        ORDER BY chore_name ASC
-    """)
-    chores = cursor.fetchall()
-
-    query = """
-        SELECT
-            u.username AS Name,
-            c.chore_name AS Chore,
-            a.date_completed AS [Completed on],
-            a.points_earned AS Points
-        FROM assignments AS a
-        INNER JOIN users AS u ON a.assigned_to = u.user_id
-        INNER JOIN chores AS c ON a.chore_id = c.chore_id
-        WHERE a.status = 'complete'
-    """
-    params = []
-
-    if start_date:
-        query += " AND a.Date_Completed >= ?"
-        params.append(start_date)
-    if end_date:
-        query += " AND a.Date_Completed <= ?"
-        params.append(end_date)
     if selected_user:
-        query += " AND u.user_id = ?"
+        base_query += " AND u.user_id = ?"
         params.append(selected_user)
+
     if selected_chore:
-        query += " AND c.chore_id = ?"
+        base_query += " AND c.chore_id = ?"
         params.append(selected_chore)
 
-    query += " ORDER BY [Completed on] DESC"
+    base_query += " ORDER BY a.date_completed DESC"
 
-    cursor.execute(query, params)
-    chores_data = cursor.fetchall()
-    conn.close()
+    chores_data = query_db(base_query, params)
 
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return render_template('partials/chore_history_table.html', chores_data=chores_data)
@@ -276,83 +242,61 @@ def chore_history():
         selected_chore=selected_chore
     )
 
-
 @app.route('/active_chores', methods=['GET', 'POST'])
+@login_required
 def active_chores():
-    if not session.get('logged_in'):
-        return redirect(url_for('login'))
 
     user_id = session.get('user_id')
+    user_type = session.get('type')
 
     if request.method == 'POST':
         assignment_id = request.form.get('assignment_id')
-        
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
+        execute_db("""
             UPDATE assignments
             SET status = 'Submitted',
-            Assigned_to = ?           
-            WHERE Assignment_ID = ?
-        """, (user_id, assignment_id,))
-        conn.commit()
-        conn.close()
-        return redirect(url_for('active_chores'))  
+                assigned_to = ?           
+            WHERE assignment_id = ?
+        """, (user_id, assignment_id))
+        return redirect(url_for('active_chores'))
 
-    
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    
-    cursor.execute("""
-        SELECT
-          u.username AS 'Name',
-          c.chore_name AS 'Chore',
-          a.date_assigned AS 'Set when',
-          a.assignment_id,
-          a.status as status
-        FROM assignments AS a
-        INNER JOIN users AS u ON a.assigned_to = u.user_id
-        INNER JOIN chores AS c ON a.chore_id = c.chore_id
-        WHERE a.status != 'Complete'
-          and a.status != 'Deleted'
+    current_user_chores = query_db("""
+        SELECT u.username AS name,
+               c.chore_name AS chore,
+               a.date_assigned AS set_when,
+               a.assignment_id,
+               a.status
+        FROM assignments a
+        JOIN users u ON a.assigned_to = u.user_id
+        JOIN chores c ON a.chore_id = c.chore_id
+        WHERE a.status NOT IN ('Complete','Deleted')
           AND u.user_id = ?
+          AND u.type = ?
         ORDER BY a.date_assigned DESC
-    """, (user_id,))
-    
-    current_user_chores = cursor.fetchall()
-    
+    """, (user_id, user_type))
 
-    
-    cursor.execute("""
-        SELECT
-          u.username AS 'Name',
-          c.chore_name AS 'Chore',
-          a.date_assigned AS 'Set when',
-          a.assignment_id,
-          a.status as status
-        FROM assignments AS a
-        INNER JOIN users AS u ON a.assigned_to = u.user_id
-        INNER JOIN chores AS c ON a.chore_id = c.chore_id
-        WHERE a.status != 'Complete'
-        and a.status != 'Deleted'
-          AND NOT u.user_id = ?
+    other_user_chores = query_db("""
+        SELECT u.username AS name,
+               c.chore_name AS chore,
+               a.date_assigned AS set_when,
+               a.assignment_id,
+               a.status
+        FROM assignments a
+        JOIN users u ON a.assigned_to = u.user_id
+        JOIN chores c ON a.chore_id = c.chore_id
+        WHERE a.status NOT IN ('Complete','Deleted')
+          AND u.user_id != ?
+          AND u.type = ?
         ORDER BY a.date_assigned DESC
-    """, (user_id,))
-    other_user_chores = cursor.fetchall()
+    """, (user_id, user_type))
 
-    
-    cursor.execute("""
-        SELECT COUNT(assignment_id) FROM assignments 
-        WHERE assigned_to = ? AND status in ('Pending', 'Sent Back')
-    """, (user_id,))
-    result = cursor.fetchone()
-    my_active_chores = result[0] if result else 0
-    
+    my_active_chores = query_db("""
+        SELECT COUNT(assignment_id) AS count
+        FROM assignments 
+        WHERE assigned_to = ? 
+          AND status IN ('Pending', 'Sent Back')
+    """, (user_id,), one=True)
+    my_active_chores = my_active_chores['count'] if my_active_chores else 0
 
-    conn.close()
-    
     return render_template(
         'active_chores.html',
         current_user_chores=current_user_chores,
@@ -361,19 +305,16 @@ def active_chores():
     )
 
 @app.route('/assignments', methods=['GET', 'POST'])
+@login_required
 def assignments():
-
-    if not session.get('logged_in'):
-        return redirect(url_for('login'))
+    user_type = session.get('type')
 
     if request.method == 'POST':
         assigned_to = int(request.form.get('assigned_to'))
         chore_id = request.form.get('chore_id')
-
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("""
+        statusgive = request.form.get('statusgive')
+          
+        execute_db("""
             INSERT INTO assignments (
                 chore_id,
                 assigned_to,
@@ -381,144 +322,117 @@ def assignments():
                 status,
                 points_earned
             )
-            VALUES (?, ?, current_timestamp, 'Pending',1)
-        """, (chore_id, assigned_to))
-        conn.commit()
-        conn.close()
-
+            VALUES (?, ?, current_timestamp, ?,(SELECT points from chores
+            where chore_id = ? ))
+        """, (chore_id, assigned_to, statusgive, chore_id))
         
-        return redirect(url_for('assignments', selected_user=assigned_to, selected_chore=chore_id))
-
+        return redirect(url_for('assignments', selected_user=assigned_to, selected_chore=chore_id, selected_status=statusgive))
     
     selected_user = request.args.get('selected_user', type=int)
     selected_chore = request.args.get('selected_chore', type=int)
+    selected_status = request.args.get('selected_status')
 
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    users = query_db("""SELECT username, user_id FROM users Where type = ?
+    """,(user_type,))
 
-    cursor.execute("SELECT username, user_id FROM users Where type = 'F'")
-    users = cursor.fetchall()
+    chores = query_db("""SELECT chore_name, chore_id FROM chores Where type = ? Order by chore_name asc
+    """,(user_type,))
+
+    status = query_db("""SELECT status FROM statuslist
+    """)
 
 
-    cursor.execute("SELECT chore_name, chore_id FROM chores Where type = 'F'")
-    chores = cursor.fetchall()
-
-    conn.close()
-
-    
     return render_template(
         'assignments.html',
         users=users,
         chores=chores,
+        status=status,
         selected_user=selected_user,
-        selected_chore=selected_chore
+        selected_chore=selected_chore,
+        selected_status=selected_status
     )
 
-
 @app.route('/chore_completions', methods=['GET', 'POST'])
+@login_required
 def chore_completions():
-    if not session.get('logged_in'):
-        return redirect(url_for('login'))
+    user_type = session.get('type')
 
     if request.method == 'POST':
         action = request.form.get('action')
 
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
         if action == 'approve_all':
-    
-            cursor.execute("""
-        SELECT c.assignment_id, c.assigned_to
-        FROM assignments as c
-        Inner join users as u
-        on c.assigned_to = u.user_id
-        WHERE c.status = 'Submitted'
-    """)
-            assignments = cursor.fetchall()
+            assignments = query_db("""
+                SELECT c.assignment_id, c.assigned_to
+                FROM assignments c
+                JOIN users u ON c.assigned_to = u.user_id
+                WHERE c.status = 'Submitted' AND u.type = ?
+                Order by c.chore_id desc                   
+            """, (user_type,))
 
-            for assignment_id, assigned_to in assignments:
-                cursor.execute("""
-            UPDATE assignments
-            SET status = 'Complete',
-                date_completed = current_timestamp,
-                completed_by = ?
-            WHERE assignment_id = ?
-        """, (assigned_to, assignment_id))
-
-        else:
-            assignment_id = request.form.get('assignment_id')
-
-            if action == 'approve':
-            
-                cursor.execute("SELECT assigned_to FROM assignments WHERE assignment_id = ?", (assignment_id,))
-                result = cursor.fetchone()
-                if result:
-                    assigned_to = result[0]
-                    cursor.execute("""
+            for assignment in assignments:
+                execute_db("""
                     UPDATE assignments
                     SET status = 'Complete',
                         date_completed = current_timestamp,
                         completed_by = ?
                     WHERE assignment_id = ?
-                """, (assigned_to, assignment_id))
+                """, (assignment['assigned_to'], assignment['assignment_id']))
+
+        else:
+            assignment_id = request.form.get('assignment_id')
+
+            if action == 'approve':
+                result = query_db(
+                    "SELECT assigned_to FROM assignments WHERE assignment_id = ?",
+                    (assignment_id,),
+                    one=True
+                )
+                if result:
+                    execute_db("""
+                        UPDATE assignments
+                        SET status = 'Complete',
+                            date_completed = current_timestamp,
+                            completed_by = ?
+                        WHERE assignment_id = ?
+                    """, (result['assigned_to'], assignment_id))
 
             elif action == 'send_back':
-                cursor.execute("""
-                UPDATE assignments
-                SET status = 'Sent Back'
-                WHERE assignment_id = ?
-            """, (assignment_id,))
-                
-            elif action == 'delete':
-                cursor.execute("""
-                UPDATE assignments
-                SET status = 'Deleted'
-                WHERE assignment_id = ?
-            """, (assignment_id,))    
+                execute_db(
+                    "UPDATE assignments SET status = 'Sent Back' WHERE assignment_id = ?",
+                    (assignment_id,)
+                )
 
-        conn.commit()
-        conn.close()
+            elif action == 'delete':
+                execute_db(
+                    "UPDATE assignments SET status = 'Deleted' WHERE assignment_id = ?",
+                    (assignment_id,)
+                )
+
         return redirect(url_for('chore_completions'))
 
-   
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT
-          u.username AS 'Name',
-          c.chore_name AS 'Chore',
-          a.date_assigned AS 'Set when',
-          a.assignment_id,
-          a.status as status
-        FROM assignments AS a
-        INNER JOIN Users AS u ON a.assigned_to = u.user_id
-        INNER JOIN Chores AS c ON a.chore_id = c.chore_id
-        WHERE a.status = 'Submitted'
+    submitted_chores = query_db("""
+        SELECT u.username AS name,
+               c.chore_name AS chore,
+               a.date_assigned AS set_when,
+               a.assignment_id,
+               a.status
+        FROM assignments a
+        JOIN users u ON a.assigned_to = u.user_id
+        JOIN chores c ON a.chore_id = c.chore_id
+        WHERE a.status = 'Submitted' AND u.type = ?
         ORDER BY a.date_assigned DESC
-    """)
-    
-    Submitted_chores = cursor.fetchall()
-    
-    conn.close()
-
+    """, (user_type,))
 
     return render_template(
         'chore_completions.html',
-        Submitted_chores=Submitted_chores
+        Submitted_chores=submitted_chores
     )
 
 @app.route('/logout')
 def logout():
-    log_event(session.get('username'), 'Logout')
     session.clear()
     return redirect(url_for('login'))
 
-
 if __name__ == '__main__':
-    app.run(debug=True)
-
-
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(host='0.0.0.0', port=5000, debug=True)
