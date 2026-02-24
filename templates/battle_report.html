@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Battle report{% endblock %}
+
+{% block content %}
+  <h1>Battle Report</h1>
+  {% for battle in battle %}
+{% if battle.rank == 1 %}
+  <h2>
+    <strong>{{ battle.username }}</strong>, you are in **1st place**!  
+    You have <strong>{{ battle.points }}</strong> points.  
+    You are currently on top — keep it up!
+  </h2>
+    <h2>
+    However!  
+    <strong>{{ battle.Who_is_below }}</strong> is right behind you with
+    <strong>{{ battle.points_below }}</strong> points. don't let up!!
+  </h2>
+{% else %}
+{% if battle.rank == 4 %}
+  <h2>
+    <strong>{{ battle.username }}</strong>, you are currently in position 
+    <strong>{{ battle.rank }}</strong>.  
+    You have <strong>{{ battle.points }}</strong> points.  
+    You are <strong>{{ battle.points_needed_to_overtake }}</strong> behind 
+    <strong>{{ battle.Who_is_above }}</strong>.
+  </h2>
+  {% else %}
+    <h2>
+    <strong>{{ battle.username }}</strong>, you are currently in position 
+    <strong>{{ battle.rank }}</strong>.  
+    You have <strong>{{ battle.points }}</strong> points.  
+    You are <strong>{{ battle.points_needed_to_overtake }}</strong> behind 
+    <strong>{{ battle.Who_is_above }}</strong>.
+  </h2>
+    <h2>
+    <strong>{{ battle.username }}</strong>, you are in **1st place**!  
+    You have <strong>{{ battle.points }}</strong> points.  
+    You are currently on top — keep it up!
+  </h2>
+    <h2>
+    However!  
+    <strong>{{ battle.Who_is_below }}</strong> is right behind you with
+    <strong>{{ battle.points_below }}</strong> points. don't let up!!
+  </h2>
+{% endif %}
+{% endif %}
+  {% endfor %}
+   {% for active in active %}
+   {% if active.active == 0 %}
+       <h2>
+    Looks like you have finished all your quests! nice! put your feet up or go get more points, you earned it!
+  </h2>
+   {% else %}
+      <h2>
+    Looks like you have <strong>{{ active.active }}</strong> quests still open
+    go take care of business!
+  </h2>
+  {% endif %}
+  {% endfor %}
+{% endblock %}

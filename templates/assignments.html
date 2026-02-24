@@ -25,6 +25,15 @@
     {% endfor %}
   </select>
 
+    <label for="statusgive">Status:</label>
+  <select name="statusgive">
+    {% for stat in status %}
+      <option value="{{ stat.status }}"{% if stat.status == selected_status %}selected{% endif %}>
+            {{ stat.status }}
+        </option>
+    {% endfor %}
+  </select>
+
   <button type="submit">Assign Chore</button>
 </form>
 {% endblock %}

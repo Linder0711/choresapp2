@@ -9,28 +9,16 @@
 </head>
 <body>
 <nav>
-  <a href="{{ url_for('leaderboard') }}">Leaderboard</a> |
-
+  <a href="{{ url_for('battle_report') }}">Battle Report</a> |
   <a href="{{ url_for('active_chores') }}" class="nav-link">
-    Active Chores
+    Open Quests
     {% if active_chores is defined and active_chores > 0 %}
       <span class="badge">{{ active_chores }}</span>
     {% endif %}
   </a> |
+  <a href="{{ url_for('assignments') }}">New Quests</a> |
+  <a href="{{ url_for('logout') }}">End Adventuring</a>
 
-  <a href="{{ url_for('chore_history') }}">History</a> |
-  <a href="{{ url_for('assignments') }}">Assign</a> |
-
-  
-    <a href="{{ url_for('chore_completions') }}" class="nav-link">
-      Completions
-      {% if chore_completions is defined and chore_completions > 0 %}
-        <span class="badge">{{ chore_completions }}</span>
-  
-    </a> |
-  {% endif %}
-
-  <a href="{{ url_for('logout') }}">Logout</a>
 </nav>
   <hr>
 

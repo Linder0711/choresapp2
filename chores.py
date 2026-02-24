@@ -20,7 +20,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    SESSION_COOKIE_SECURE=False
+    SESSION_COOKIE_SECURE=False  # True if you ever serve via HTTPS
 )
         
 def login_required(f):
@@ -98,7 +98,7 @@ def login():
                     'type': user['type']
                 })
                 flash("Login successful!", "success")
-                return redirect(url_for('battle_report'))
+                return redirect(url_for('leaderboard'))
 
             flash("Login failed – user not found.", "error")
             return redirect(url_for('login'))
@@ -108,7 +108,7 @@ def login():
     print(get_flashed_messages(with_categories=True))
 
     return render_template('login.html')
-#For if I ever want to enable password reset testing this is a change
+
 #@app.route('/reset_password', methods=['GET', 'POST'])
 #def reset_password():
 #    if request.method == 'POST':
@@ -127,66 +127,6 @@ def login():
 
 #    return render_template('reset_password.html')
 
-@app.route('/battle_report')
-@login_required
-def battle_report():
-    user = session.get('user_id')
-
-    battle = query_db("""
-    WITH ranked AS (
-    SELECT
-        ROW_NUMBER() OVER (ORDER BY points DESC) AS rank,
-        user_id,
-        username,
-        points
-    FROM (
-        SELECT
-            u.user_id,
-            u.username,
-            SUM(c.points) AS points
-        FROM assignments AS a
-        JOIN users AS u ON a.completed_by = u.user_id
-        JOIN chores AS c ON a.chore_id = c.chore_id
-        WHERE a.status = 'Complete'
-          AND date(a.date_completed) >= date('now', '-' || ((strftime('%w','now') + 2) % 7) || ' day')
-        GROUP BY u.user_id, u.username
-    )
-)
-SELECT
-    me.rank,
-    me.username,
-    me.points,
-    above.points AS points_above,
-	above.username as Who_is_above,
-    CASE 
-        WHEN above.points IS NULL THEN 0 
-        ELSE above.points - me.points 
-    END AS points_needed_to_overtake,
-	below.points as points_below,
-	below.username as Who_is_below,
-	    CASE 
-        WHEN below.points IS NULL THEN 0 
-        ELSE me.points - below.points
-    END AS points_ahead_by
-FROM ranked AS me
-LEFT JOIN ranked AS above
-    ON above.rank = me.rank - 1
-LEFT JOIN ranked AS below
-    ON below.rank = me.rank + 1
-WHERE me.user_id = ?;
-
-                      """, (user,))
-    active = query_db("""
-    Select count(*) as active from assignments
-where status = 'Pending'
-and assigned_to = ?;
-""", (user,))
-
-    return render_template(
-        "battle_report.html",
-        battle=battle, active=active
-    )
-
 @app.route('/leaderboard')
 @login_required
 def leaderboard():
@@ -197,6 +137,7 @@ def leaderboard():
         FROM users as u
         LEFT JOIN assignments as a ON u.user_id = a.completed_by
         WHERE u.type = ?
+        AND a.date_completed > '2025-12-31'
         GROUP BY username
         ORDER BY total_points DESC
     """, (user_type,))
@@ -324,9 +265,7 @@ def active_chores():
                c.chore_name AS chore,
                a.date_assigned AS set_when,
                a.assignment_id,
-               a.status,
-               c.points,
-            c.difficulty
+               a.status
         FROM assignments a
         JOIN users u ON a.assigned_to = u.user_id
         JOIN chores c ON a.chore_id = c.chore_id
@@ -341,9 +280,7 @@ def active_chores():
                c.chore_name AS chore,
                a.date_assigned AS set_when,
                a.assignment_id,
-               a.status,
-               c.points,
-            c.difficulty
+               a.status
         FROM assignments a
         JOIN users u ON a.assigned_to = u.user_id
         JOIN chores c ON a.chore_id = c.chore_id
@@ -497,6 +434,7 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+
 if __name__ == '__main__':
     debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
-    app.run(host='0.0.0.0', port=5010, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)

@@ -1,24 +1,57 @@
 {% extends "base.html" %}
 
-{% block title %}Active chores{% endblock %}
+{% block title %}Current Quests{% endblock %}
 
 {% block content %}
 
-  <h1>My current chores</h1>
-  <table border="1">
+  <h1>My Unfinished Quests</h1>
+  <div class="filters">
+    <label>
+        Filter by Name:
+        <select id="filterName" onchange="applyFilters()">
+            <option value="">All</option>
+            <option value="Chris">Chris</option>
+            <option value="Jacob">Jacob</option>
+            <option value="Alex">Alex</option>
+            <option value="Kelly">Kelly</option>
+        </select>
+    </label>
+
+    <label>
+        Filter by Difficulty:
+        <select id="filterDifficulty" onchange="applyFilters()">
+            <option value="">All</option>
+            <option value="1">⭐</option>
+            <option value="2">⭐⭐</option>
+            <option value="3">⭐⭐⭐</option>
+        </select>
+    </label>
+
+    <label>
+        Search by Chore:
+        <input type="text" id="searchChore" onkeyup="applyFilters()" placeholder="Search chore name...">
+    </label>
+</div>
+
+  <table id="questsTable">
     <tr>
-      	<th>Name</th>
-	<th>Chore</th>
-	<th>Set When</th>
-	<th>Completion_Status</th>
+<th onclick="sortTable(0, this)">Name <span class="sort-arrow"></span></th>
+<th onclick="sortTable(1, this)">Chore <span class="sort-arrow"></span></th>
+<th onclick="sortTable(2, this)">Set When <span class="sort-arrow"></span></th>
+<th onclick="sortTable(3, this)">Status <span class="sort-arrow"></span></th>
+<th onclick="sortTable(4, this)">Points <span class="sort-arrow"></span></th>
+<th onclick="sortTable(5, this)">Difficulty <span class="sort-arrow"></span></th>
+<th>Submit</th>
 
     </tr>
 	{% for row in current_user_chores %}
 <tr>
   <td>{{ row.Name }}</td>
   <td>{{ row.Chore }}</td>
-  <td>{{ row['Set when'] }}</td>
+  <td>{{ row['set_when'] }}</td>
   <td>{{ row.status }}</td>
+  <td>{{ row.points }}</td>
+  <td>{{  "⭐" * row.difficulty }}</td>
 <td>
   {% if row.status == 'Pending' %}
     <form method="POST" action="{{ url_for('active_chores') }}">
@@ -41,21 +74,26 @@
     {% endfor %}
   </table>
 
-  <h2>Other current chores</h2>
-  <table border="1">
+  <h2>Other Open Quests</h2>
+  <table >
     <tr>
       	<th>Name</th>
 	<th>Chore</th>
 	<th>Set When</th>
-	<th>Completion_Status</th>
+	<th>Status</th>
+    <th>Points</th>
+  <th>Difficulty</th>
+<th>Submit</th>
 
     </tr>
 	{% for row in other_user_chores %}
 <tr>
   <td>{{ row.Name }}</td>
   <td>{{ row.Chore }}</td>
-  <td>{{ row['Set when'] }}</td>
+  <td>{{ row['set_when'] }}</td>
   <td>{{ row.status }}</td>
+    <td>{{ row.points }}</td>
+  <td>{{  "⭐" * row.difficulty }}</td>
   <td>
     {% if row.status == 'Pending' %}
       <form method="POST" action="{{ url_for('active_chores') }}">
@@ -72,4 +110,80 @@
 </tr>
     {% endfor %}
   </table>
+  {% block scripts %}
+  <script>
+let currentSortCol = null;
+let sortDirection = true; // true = ascending
+
+function sortTable(colIndex, headerElem) {
+    const table = document.getElementById("questsTable");
+    const rows = Array.from(table.rows).slice(1);
+
+    rows.sort((a, b) => {
+        const A = a.cells[colIndex].innerText.trim();
+        const B = b.cells[colIndex].innerText.trim();
+
+        const numA = parseFloat(A);
+        const numB = parseFloat(B);
+
+        if (!isNaN(numA) && !isNaN(numB)) {
+            return sortDirection ? numA - numB : numB - numA;
+        }
+
+        if (A.match(/^\d{4}-\d{2}-\d{2}/)) {
+            return sortDirection
+                ? new Date(A) - new Date(B)
+                : new Date(B) - new Date(A);
+        }
+
+        return sortDirection ? A.localeCompare(B) : B.localeCompare(A);
+    });
+
+    // reattach rows
+    const tbody = table.tBodies[0];
+    rows.forEach(row => tbody.appendChild(row));
+
+    // clear arrows on all headers
+    document.querySelectorAll(".sort-arrow").forEach(el => el.textContent = "");
+
+    // set arrow on the clicked header
+    const arrow = headerElem.querySelector(".sort-arrow");
+    arrow.textContent = sortDirection ? "▲" : "▼";
+
+    // flip direction for next click
+    if (currentSortCol === colIndex) {
+        sortDirection = !sortDirection;
+    } else {
+        sortDirection = true;
+        currentSortCol = colIndex;
+    }
+}
+</script>
+<script>
+function applyFilters() {
+    const nameFilter = document.getElementById("filterName").value.toLowerCase();
+    const diffFilter = document.getElementById("filterDifficulty").value;
+    const searchText = document.getElementById("searchChore").value.toLowerCase();
+
+    const table = document.getElementById("questsTable");
+    const rows = Array.from(table.rows).slice(1);
+
+    rows.forEach(row => {
+        const name = row.cells[0].innerText.toLowerCase();
+        const chore = row.cells[1].innerText.toLowerCase();
+        const difficultyStars = row.cells[5].innerText.length; // ⭐⭐ = 2
+
+        let visible = true;
+
+        if (nameFilter && !name.includes(nameFilter)) visible = false;
+        if (diffFilter && difficultyStars != diffFilter) visible = false;
+        if (searchText && !chore.includes(searchText)) visible = false;
+
+        row.style.display = visible ? "" : "none";
+    });
+}
+</script>
+
+
+{% endblock %}
 {% endblock %}
