@@ -19,6 +19,23 @@
   <a href="{{ url_for('assignments') }}">New Quests</a> |
   <a href="{{ url_for('logout') }}">End Adventuring</a>
 
+<<<<<<< HEAD
+=======
+  <a href="{{ url_for('chore_history') }}">History</a> |
+  <a href="{{ url_for('assignments') }}">Assign</a> |
+
+  
+    <a href="{{ url_for('chore_completions') }}" class="nav-link">
+      Completions
+      {% if chore_completions is defined and chore_completions > 0 %}
+        <span class="badge">{{ chore_completions }}</span>
+  
+    </a> |
+  {% endif %}
+
+  <a href="{{ url_for('logout') }}">Logout</a>
+
+>>>>>>> b6f6bab48cb8a3712e67e2ffca35e3cd56cbfa2c
 </nav>
   <hr>
 
